@@ -582,6 +582,339 @@ document.addEventListener('keydown', (e) => {
 });
 
 document.getElementById('startBtn').addEventListener('click', startGame);
+tPiece.x + kick, currentPiece.y, rotated)) {
+      currentPiece.shape = rotated;
+      currentPiece.x += kick;
+      return;
+    }
+  }
+}
+
+function hold() {
+  if (!canHold) return;
+  if (heldPiece === null) {
+    heldPiece = { type: currentPiece.type };
+    currentPiece = nextPiece;
+    nextPiece = randomPiece();
+    drawNext();
+  } else {
+    const tempType = currentPiece.type;
+    currentPiece = { type: heldPiece.type };
+    resetPiecePosition(currentPiece);
+    heldPiece = { type: tempType };
+  }
+  canHold = false;
+  drawHold();
+  if (collision(currentPiece.x, currentPiece.y, currentPiece.shape)) {
+    gameOver();
+  }
+}
+
+function clearLines() {
+  let cleared = 0;
+  for (let y = ROWS - 1; y >= 0; y--) {
+    if (board[y].every(cell => cell !== 0)) {
+      board.splice(y, 1);
+      board.unshift(Array(COLS).fill(0));
+      cleared++;
+      y++;
+    }
+  }
+  if (cleared > 0) {
+    const points = LINE_SCORES[cleared] * level;
+    score += points;
+    lines += cleared;
+    level = Math.floor(lines / 10) + 1;
+    dropInterval = Math.max(100, 1000 - (level - 1) * 80);
+    const bonus = TIME_BONUS[cleared];
+    timeLeft += bonus;
+    showFloatingText(`+${bonus}초`, 'bonus-text');
+    showFloatingText(`+${points}점`, 'score-text');
+    updateUI();
+  }
+}
+
+function showFloatingText(text, className) {
+  const el = document.createElement('div');
+  el.className = className;
+  el.textContent = text;
+  document.querySelector('.game-area').appendChild(el);
+  setTimeout(() => el.remove(), 1500);
+}
+
+function drop() {
+  if (!collision(currentPiece.x, currentPiece.y + 1, currentPiece.shape)) {
+    currentPiece.y++;
+  } else {
+    merge();
+    clearLines();
+    currentPiece = nextPiece;
+    nextPiece = randomPiece();
+    canHold = true;
+    drawHold();
+    drawNext();
+    if (collision(currentPiece.x, currentPiece.y, currentPiece.shape)) {
+      gameOver();
+    }
+  }
+  dropCounter = 0;
+}
+
+function hardDrop() {
+  while (!collision(currentPiece.x, currentPiece.y + 1, currentPiece.shape)) {
+    currentPiece.y++;
+    score += 2;
+  }
+  drop();
+  updateUI();
+}
+
+function move(dir) {
+  if (!collision(currentPiece.x + dir, currentPiece.y, currentPiece.shape)) {
+    currentPiece.x += dir;
+  }
+}
+
+function updateUI() {
+  document.getElementById('scoreValue').textContent = score;
+  document.getElementById('linesValue').textContent = lines;
+  document.getElementById('levelValue').textContent = level;
+  document.getElementById('timeValue').textContent = Math.ceil(timeLeft);
+  const timePanel = document.getElementById('timePanel');
+  timePanel.classList.remove('warning', 'danger');
+  if (timeLeft <= 10) timePanel.classList.add('danger');
+  else if (timeLeft <= 20) timePanel.classList.add('warning');
+}
+
+function gameLoop(time = 0) {
+  if (!gameRunning || gamePaused) return;
+  const delta = time - lastTime;
+  lastTime = time;
+  dropCounter += delta;
+  if (dropCounter > dropInterval) drop();
+  drawBoard();
+  requestAnimationFrame(gameLoop);
+}
+
+function startTimer() {
+  if (timerInterval) clearInterval(timerInterval);
+  timerInterval = setInterval(() => {
+    if (!gameRunning || gamePaused) return;
+    timeLeft -= 0.1;
+    if (timeLeft <= 0) {
+      timeLeft = 0;
+      gameOver('시간 종료!');
+    }
+    updateUI();
+  }, 100);
+}
+
+function startGame() {
+  board = createBoard();
+  currentPiece = randomPiece();
+  nextPiece = randomPiece();
+  heldPiece = null;
+  canHold = true;
+  score = 0;
+  lines = 0;
+  level = 1;
+  timeLeft = INITIAL_TIME;
+  dropInterval = 1000;
+  dropCounter = 0;
+  lastTime = 0;
+  gameRunning = true;
+  gamePaused = false;
+  document.getElementById('overlay').classList.add('hidden');
+  document.getElementById('finalScore').style.display = 'none';
+  updateUI();
+  drawNext();
+  drawHold();
+  startTimer();
+  requestAnimationFrame(gameLoop);
+}
+
+function gameOver(reason = '게임 오버') {
+  gameRunning = false;
+  clearInterval(timerInterval);
+  const overlay = document.getElementById('overlay');
+  document.getElementById('overlayTitle').textContent = reason;
+  document.getElementById('overlayMessage').textContent = '';
+  const finalScore = document.getElementById('finalScore');
+  finalScore.style.display = 'block';
+  finalScore.innerHTML = `최종 점수: <b>${score}</b><br>제거한 줄: <b>${lines}</b> · 도달 레벨: <b>${level}</b>`;
+  document.getElementById('startBtn').textContent = '다시 시작';
+  overlay.classList.remove('hidden');
+  // Check leaderboard
+  setTimeout(() => checkLeaderboardEntry(), 400);
+}
+
+function togglePause() {
+  if (!gameRunning) return;
+  gamePaused = !gamePaused;
+  const overlay = document.getElementById('overlay');
+  if (gamePaused) {
+    document.getElementById('overlayTitle').textContent = '⏸ 일시정지';
+    document.getElementById('overlayMessage').textContent = 'P를 눌러 계속하기';
+    document.getElementById('finalScore').style.display = 'none';
+    overlay.classList.remove('hidden');
+  } else {
+    overlay.classList.add('hidden');
+    lastTime = performance.now();
+    requestAnimationFrame(gameLoop);
+  }
+}
+
+// ============ LEADERBOARD ============
+function getLeaderboard() {
+  try {
+    const data = localStorage.getItem(LEADERBOARD_KEY);
+    return data ? JSON.parse(data) : [];
+  } catch (e) { return []; }
+}
+
+function saveLeaderboard(list) {
+  try {
+    localStorage.setItem(LEADERBOARD_KEY, JSON.stringify(list));
+  } catch (e) { console.warn('저장 실패:', e); }
+}
+
+function qualifiesForLeaderboard(scoreVal) {
+  if (scoreVal <= 0) return false;
+  const list = getLeaderboard();
+  if (list.length < MAX_LEADERBOARD) return true;
+  return scoreVal > list[list.length - 1].score;
+}
+
+function checkLeaderboardEntry() {
+  if (qualifiesForLeaderboard(score)) {
+    openLeaderboard(true);
+  }
+}
+
+function addToLeaderboard(name) {
+  const list = getLeaderboard();
+  const entry = {
+    name: name.trim().slice(0, 12) || 'Player',
+    score,
+    lines,
+    level,
+    date: new Date().toISOString().slice(0, 10)
+  };
+  list.push(entry);
+  list.sort((a, b) => b.score - a.score);
+  const trimmed = list.slice(0, MAX_LEADERBOARD);
+  saveLeaderboard(trimmed);
+  return trimmed.indexOf(entry);
+}
+
+function renderLeaderboard(highlightIndex = -1) {
+  const list = getLeaderboard();
+  const container = document.getElementById('leaderboardList');
+  if (list.length === 0) {
+    container.innerHTML = '<div class="empty-board">아직 기록이 없습니다.<br>첫 번째 기록의 주인공이 되어보세요!</div>';
+    return;
+  }
+  let html = '<table class="leaderboard-table"><thead><tr>';
+  html += '<th>순위</th><th>이름</th><th style="text-align:right;">점수</th><th style="text-align:right;">줄</th><th style="text-align:right;">Lv</th>';
+  html += '</tr></thead><tbody>';
+  list.forEach((entry, i) => {
+    const rankClass = i === 0 ? 'rank-1' : i === 1 ? 'rank-2' : i === 2 ? 'rank-3' : '';
+    const trClass = i === highlightIndex ? 'new-record' : '';
+    const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `${i + 1}`;
+    html += `<tr class="${trClass}">`;
+    html += `<td class="${rankClass}">${medal}</td>`;
+    html += `<td>${escapeHtml(entry.name)}</td>`;
+    html += `<td style="text-align:right;" class="${rankClass}">${entry.score}</td>`;
+    html += `<td style="text-align:right;">${entry.lines}</td>`;
+    html += `<td style="text-align:right;">${entry.level}</td>`;
+    html += `</tr>`;
+  });
+  html += '</tbody></table>';
+  container.innerHTML = html;
+}
+
+function escapeHtml(str) {
+  return String(str).replace(/[&<>"']/g, s => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+  }[s]));
+}
+
+function openLeaderboard(withNameEntry = false) {
+  const modal = document.getElementById('leaderboardModal');
+  const nameEntry = document.getElementById('nameEntry');
+  if (withNameEntry) {
+    nameEntry.style.display = 'block';
+    document.getElementById('playerName').focus();
+  } else {
+    nameEntry.style.display = 'none';
+  }
+  renderLeaderboard();
+  modal.classList.remove('hidden');
+}
+
+function closeLeaderboard() {
+  document.getElementById('leaderboardModal').classList.add('hidden');
+  document.getElementById('nameEntry').style.display = 'none';
+  document.getElementById('playerName').value = '';
+}
+
+// Event handlers
+document.getElementById('leaderboardBtn').addEventListener('click', () => openLeaderboard(false));
+document.getElementById('closeLeaderboardBtn').addEventListener('click', closeLeaderboard);
+document.getElementById('saveScoreBtn').addEventListener('click', () => {
+  const name = document.getElementById('playerName').value;
+  const idx = addToLeaderboard(name);
+  document.getElementById('nameEntry').style.display = 'none';
+  renderLeaderboard(idx);
+});
+document.getElementById('skipSaveBtn').addEventListener('click', () => {
+  document.getElementById('nameEntry').style.display = 'none';
+});
+document.getElementById('playerName').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') document.getElementById('saveScoreBtn').click();
+});
+document.getElementById('clearLeaderboardBtn').addEventListener('click', () => {
+  if (confirm('정말 모든 기록을 삭제하시겠습니까?')) {
+    localStorage.removeItem(LEADERBOARD_KEY);
+    renderLeaderboard();
+  }
+});
+
+// Keyboard
+document.addEventListener('keydown', (e) => {
+  if (!document.getElementById('leaderboardModal').classList.contains('hidden')) return;
+  if (e.key === 'p' || e.key === 'P') {
+    togglePause();
+    e.preventDefault();
+    return;
+  }
+  if (!gameRunning || gamePaused) {
+    if (e.key === ' ' && !gameRunning) {
+      startGame();
+      e.preventDefault();
+    }
+    return;
+  }
+  switch(e.key) {
+    case 'ArrowLeft': move(-1); break;
+    case 'ArrowRight': move(1); break;
+    case 'ArrowDown': drop(); score += 1; updateUI(); break;
+    case 'ArrowUp': tryRotate(1); break;
+    case 'z': case 'Z': tryRotate(2); break;
+    case 'c': case 'C': hold(); break;
+    case ' ': hardDrop(); e.preventDefault(); break;
+  }
+  drawBoard();
+});
+
+document.getElementById('startBtn').addEventListener('click', startGame);
+
+// Initial render
+board = createBoard();
+heldPiece = null;
+canHold = false;
+drawBoard();
+drawHold();
 
 // Initial render
 board = createBoard();
